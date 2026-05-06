@@ -1,0 +1,100 @@
+import type { IdPaciente, Paciente } from "@/lib/tipos";
+
+export const PACIENTES: Record<IdPaciente, Paciente> = {
+  juan: {
+    id: "juan",
+    name: "Juan Pérez",
+    initials: "JP",
+    age: 54,
+    case: "routine",
+    caseTone: "green",
+    caseLabel: { es: "Rutinario", en: "Routine" },
+    city: "Guayaquil",
+    insurer: "Aegis Salud",
+    insurerMark: "A",
+    insurerTone: "green",
+    plan: "Essential 50",
+    policyNo: "AS-2024-0187432",
+    validity: "15 mar 2024 → 15 mar 2027",
+    deductible: { annual: 1000, used: 850 },
+    coverages: [
+      { type: { es: "Emergencia", en: "Emergency" }, pct: 100 },
+      { type: { es: "Hospitalización", en: "Hospitalization" }, pct: 90 },
+      { type: { es: "Consulta externa", en: "Outpatient" }, pct: 80 },
+      { type: { es: "Cirugía", en: "Surgery" }, pct: 80 },
+    ],
+    network: ["alcivar", "kennedy", "metropolitano"],
+    preexisting: ["Hipertensión arterial"],
+    seedQuery: {
+      es: "Hola, llevo 2 días con dolor de cabeza fuerte y veo borroso a ratos.",
+      en: "Hi, I've had a strong headache for 2 days and blurred vision at times.",
+    },
+    specialty: { es: "Neurología", en: "Neurology" },
+  },
+  maria: {
+    id: "maria",
+    name: "María López",
+    initials: "ML",
+    age: 42,
+    case: "preexisting",
+    caseTone: "amber",
+    caseLabel: { es: "Pre-existencia", en: "Pre-existing" },
+    city: "Quito",
+    insurer: "Vital+",
+    insurerMark: "V",
+    insurerTone: "amber",
+    plan: "World Access",
+    policyNo: "VP-2023-9981102",
+    validity: "01 jul 2023 → 01 jul 2026",
+    deductible: { annual: 800, used: 320 },
+    coverages: [
+      { type: { es: "Emergencia", en: "Emergency" }, pct: 100 },
+      { type: { es: "Hospitalización", en: "Hospitalization" }, pct: 85 },
+      { type: { es: "Consulta externa", en: "Outpatient" }, pct: 70 },
+      { type: { es: "Maternidad", en: "Maternity" }, pct: 0 },
+    ],
+    network: ["metropolitano", "axxis", "kennedy"],
+    preexisting: ["Migraña crónica"],
+    seedQuery: {
+      es: "Hola, tengo una migraña que no se va con paracetamol desde anoche.",
+      en: "Hi, I've got a migraine that paracetamol won't fix since last night.",
+    },
+    specialty: { es: "Neurología", en: "Neurology" },
+  },
+  pedro: {
+    id: "pedro",
+    name: "Pedro Morales",
+    initials: "PM",
+    age: 60,
+    case: "redflag",
+    caseTone: "red",
+    caseLabel: { es: "Señal de alarma", en: "Red flag" },
+    city: "Guayaquil",
+    insurer: "Solaris Med",
+    insurerMark: "S",
+    insurerTone: "red",
+    plan: "Enfermedades Graves",
+    policyNo: "SM-2022-4480091",
+    validity: "10 ene 2022 → 10 ene 2027",
+    deductible: { annual: 1500, used: 0 },
+    coverages: [
+      { type: { es: "Emergencia", en: "Emergency" }, pct: 100 },
+      { type: { es: "Hospitalización", en: "Hospitalization" }, pct: 100 },
+      { type: { es: "Consulta externa", en: "Outpatient" }, pct: 60 },
+      { type: { es: "Cirugía cardíaca", en: "Cardiac surgery" }, pct: 100 },
+    ],
+    network: ["alcivar", "kennedy", "omni"],
+    preexisting: ["Diabetes tipo 2"],
+    seedQuery: {
+      es: "Tengo dolor en el pecho que se va al brazo izquierdo y sudo frío.",
+      en: "I have chest pain spreading to my left arm and I'm sweating cold.",
+    },
+    specialty: { es: "Cardiología / Emergencias", en: "Cardiology / Emergency" },
+  },
+};
+
+export const ID_PACIENTES: IdPaciente[] = ["juan", "maria", "pedro"];
+
+export function esPacienteValido(id: string | undefined): id is IdPaciente {
+  return id === "juan" || id === "maria" || id === "pedro";
+}
