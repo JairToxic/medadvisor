@@ -1,10 +1,9 @@
 import { notFound } from "next/navigation";
 import { PantallaChat } from "@/componentes/PantallaChat";
-import { ID_PACIENTES, PACIENTES, esPacienteValido } from "@/datos/pacientes";
+import { obtenerPaciente } from "@/lib/pacientes-azure";
+import { cargarHistorial } from "@/lib/historial-azure";
 
-export function generateStaticParams() {
-  return ID_PACIENTES.map((paciente) => ({ paciente }));
-}
+export const dynamic = "force-dynamic";
 
 interface PaginaProps {
   params: Promise<{ paciente: string }>;
@@ -12,6 +11,8 @@ interface PaginaProps {
 
 export default async function Pagina({ params }: PaginaProps) {
   const { paciente: id } = await params;
-  if (!esPacienteValido(id)) notFound();
-  return <PantallaChat paciente={PACIENTES[id]} />;
+  const paciente = await obtenerPaciente(id);
+  if (!paciente) notFound();
+  const historial = await cargarHistorial(id);
+  return <PantallaChat paciente={paciente} historial={historial} />;
 }

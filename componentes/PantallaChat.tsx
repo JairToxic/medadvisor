@@ -6,37 +6,43 @@ import {
   BrandMark,
   Cal,
   Camera,
+  Clock,
   Coin,
   Doc,
   Map as MapIcon,
   Mic,
-  Paperclip,
   Phone,
   Pin,
   Reset,
   Send,
   Settings,
   Sparkle,
+  VolumeOff,
+  VolumeOn,
 } from "@/componentes/Iconos";
 import { BurbujaMensaje } from "@/componentes/BurbujaMensaje";
 import { TarjetaCostos } from "@/componentes/TarjetaCostos";
 import { AlertaUrgencia } from "@/componentes/AlertaUrgencia";
 import { TarjetaConfirmacion } from "@/componentes/TarjetaConfirmacion";
+import { TarjetaAmbulancia, type AmbulanciaInfo } from "@/componentes/TarjetaAmbulancia";
 import { ModalReserva } from "@/componentes/ModalReserva";
 import { PanelRazonamiento } from "@/componentes/PanelRazonamiento";
 import { PanelPoliza } from "@/componentes/PanelPoliza";
 import { PanelMapa } from "@/componentes/PanelMapa";
 import { PanelCostos } from "@/componentes/PanelCostos";
+import { PanelHistorial } from "@/componentes/PanelHistorial";
 import { ControlesPreferencias } from "@/componentes/ControlesPreferencias";
+import { Tutorial } from "@/componentes/Tutorial";
+import { lanzarTour, tourFueVisto } from "@/lib/tour";
 import { usePreferencias } from "@/componentes/ProveedorPreferencias";
-import { ESCENARIOS } from "@/datos/escenarios";
 import type {
   AccionRapida,
   AgenteEjecutado,
+  ClausulaCitada,
   EstadoAgente,
+  EventoAtencion,
   HospitalRecomendado,
   IdPanel,
-  IdPaciente,
   InfoReserva,
   Mensaje,
   Paciente,
@@ -44,13 +50,51 @@ import type {
 
 interface Props {
   paciente: Paciente;
+  historial: EventoAtencion[];
 }
 
 const ESTADOS_INICIALES: EstadoAgente[] = ["pending", "pending", "pending", "pending"];
 
-const dormir = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+type EventoSSE =
+  | { type: "agent_start"; idx: number }
+  | {
+      type: "agent_done";
+      idx: number;
+      ms: number;
+      output: Record<string, unknown> | null;
+    }
+  | { type: "sidepanel"; tab: IdPanel }
+  | { type: "bot_start" }
+  | { type: "bot_token"; text: string }
+  | { type: "bot_end" }
+  | { type: "card_cost"; recs: HospitalRecomendado[]; specialty: string }
+  | { type: "recs_emergencia"; recs: HospitalRecomendado[] }
+  | { type: "clausula"; clausula: ClausulaCitada }
+  | { type: "redflag" }
+  | { type: "actions"; actions: AccionRapida[] }
+  | { type: "error"; message: string }
+  | { type: "done" };
 
-export function PantallaChat({ paciente }: Props) {
+interface ResultadoVoz {
+  results: ArrayLike<{ 0: { transcript: string }; isFinal: boolean }>;
+}
+interface SpeechRecognitionLike {
+  lang: string;
+  interimResults: boolean;
+  continuous: boolean;
+  onresult: ((e: ResultadoVoz) => void) | null;
+  onerror: (() => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+}
+interface VentanaConVoz {
+  SpeechRecognition?: new () => SpeechRecognitionLike;
+  webkitSpeechRecognition?: new () => SpeechRecognitionLike;
+}
+
+export function PantallaChat({ paciente, historial }: Props) {
   const router = useRouter();
   const { idioma, textos } = usePreferencias();
 
@@ -73,16 +117,146 @@ export function PantallaChat({ paciente }: Props) {
   const [composer, setComposer] = useState("");
   const [ejecutando, setEjecutando] = useState(false);
   const [polizaVisible, setPolizaVisible] = useState(false);
+  const [clausulaCitada, setClausulaCitada] = useState<ClausulaCitada | null>(null);
+  const [ubicacion, setUbicacion] = useState<{ lat: number; lng: number } | null>(null);
+  const [estadoUbic, setEstadoUbic] = useState<"idle" | "pidiendo" | "ok" | "error">("idle");
+  const [voiceOn, setVoiceOn] = useState(false);
+  const [escuchando, setEscuchando] = useState(false);
+  const [analizandoImg, setAnalizandoImg] = useState(false);
+  const [imagenPendiente, setImagenPendiente] = useState<{ file: File; url: string } | null>(null);
+  const [captionImg, setCaptionImg] = useState("");
+  const [tutorialAbierto, setTutorialAbierto] = useState(false);
+  const [ambulancia, setAmbulancia] = useState<AmbulanciaInfo | null>(null);
+  const [conectando911, setConectando911] = useState(false);
+  const tipTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const llegadaTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const streamRef = useRef<HTMLDivElement | null>(null);
-  const tokenEjecucion = useRef(0);
+  const cancelRef = useRef<AbortController | null>(null);
+  const voiceRef = useRef(false);
+  const recogRef = useRef<SpeechRecognitionLike | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const composerRef = useRef<HTMLInputElement | null>(null);
+
+  // Streaming TTS: cola y buffer
+  const ttsBufferRef = useRef("");
+  const ttsQueueRef = useRef<Promise<HTMLAudioElement | null>[]>([]);
+  const ttsPlayingRef = useRef(false);
+  const ttsCancelRef = useRef<AbortController | null>(null);
+  const audioActivoRef = useRef<HTMLAudioElement | null>(null);
+
+  const limpiarParaTTS = (texto: string): string =>
+    texto.replace(/\*\*([^*]+)\*\*/g, "$1").replace(/[*_~`]/g, "").trim();
+
+  const detenerVoz = useCallback(() => {
+    ttsCancelRef.current?.abort();
+    ttsCancelRef.current = null;
+    ttsQueueRef.current = [];
+    ttsBufferRef.current = "";
+    audioActivoRef.current?.pause();
+    audioActivoRef.current = null;
+    ttsPlayingRef.current = false;
+  }, []);
+
+  const procesarColaTTS = useCallback(async () => {
+    if (ttsPlayingRef.current) return;
+    ttsPlayingRef.current = true;
+    while (ttsQueueRef.current.length > 0) {
+      const promise = ttsQueueRef.current.shift()!;
+      const audio = await promise;
+      if (!audio || !voiceRef.current) continue;
+      audioActivoRef.current = audio;
+      await new Promise<void>((resolve) => {
+        audio.onended = () => resolve();
+        audio.onerror = () => resolve();
+        audio.play().catch(() => resolve());
+      });
+      audioActivoRef.current = null;
+    }
+    ttsPlayingRef.current = false;
+  }, []);
+
+  const encolarTTS = useCallback(
+    (texto: string) => {
+      const limpio = limpiarParaTTS(texto);
+      if (!limpio || limpio.length < 3) return;
+      const ctl = ttsCancelRef.current ?? new AbortController();
+      ttsCancelRef.current = ctl;
+      const promise = (async (): Promise<HTMLAudioElement | null> => {
+        try {
+          const resp = await fetch("/api/voice/tts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: ctl.signal,
+            body: JSON.stringify({ text: limpio, idioma }),
+          });
+          if (!resp.ok) return null;
+          const blob = await resp.blob();
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          audio.addEventListener("ended", () => URL.revokeObjectURL(url));
+          return audio;
+        } catch {
+          return null;
+        }
+      })();
+      ttsQueueRef.current.push(promise);
+      procesarColaTTS();
+    },
+    [idioma, procesarColaTTS],
+  );
+
+  // Extrae oraciones completas del buffer y las envía a TTS
+  const flushBufferTTS = useCallback(
+    (forzar = false) => {
+      if (!voiceRef.current) return;
+      let buffer = ttsBufferRef.current;
+      let extracto = "";
+      const RE = /^([\s\S]*?[.!?¿¡])\s+/;
+      while (true) {
+        const m = buffer.match(RE);
+        if (!m) break;
+        if (m[1].trim().length < 6) {
+          // Demasiado corto, considerar parte de la siguiente
+          buffer = buffer.slice(m[0].length);
+          extracto += m[1] + " ";
+          continue;
+        }
+        extracto += m[1] + " ";
+        buffer = buffer.slice(m[0].length);
+      }
+      if (forzar && buffer.trim().length > 0) {
+        extracto += buffer;
+        buffer = "";
+      }
+      ttsBufferRef.current = buffer;
+      if (extracto.trim()) encolarTTS(extracto.trim());
+    },
+    [encolarTTS],
+  );
+
+  useEffect(() => {
+    voiceRef.current = voiceOn;
+    if (!voiceOn) detenerVoz();
+  }, [voiceOn, detenerVoz]);
 
   useEffect(() => {
     const el = streamRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [mensajes, mostrarCosto, mostrarUrgencia, confirmacion, acciones]);
 
-  useEffect(() => {
-    tokenEjecucion.current += 1;
+  const limpiarTimersEmergencia = useCallback(() => {
+    tipTimersRef.current.forEach((t) => clearTimeout(t));
+    tipTimersRef.current = [];
+    if (llegadaTimerRef.current) {
+      clearTimeout(llegadaTimerRef.current);
+      llegadaTimerRef.current = null;
+    }
+  }, []);
+
+  const reiniciarEstado = useCallback(() => {
+    cancelRef.current?.abort();
+    detenerVoz();
+    limpiarTimersEmergencia();
     setMensajes([
       {
         role: "bot",
@@ -102,68 +276,51 @@ export function PantallaChat({ paciente }: Props) {
     setAcciones(null);
     setConfirmacion(null);
     setPolizaVisible(false);
+    setClausulaCitada(null);
+    setAmbulancia(null);
+    setConectando911(false);
     setEjecutando(false);
-  }, [paciente.id, idioma, agentesIniciales, paciente.name]);
+  }, [idioma, paciente.name, agentesIniciales, detenerVoz, limpiarTimersEmergencia]);
 
-  const transmitirBot = useCallback(
-    (texto: string, token: number) =>
-      new Promise<void>((resolve) => {
-        let i = 0;
-        setMensajes((m) => [...m, { role: "bot", text: "", streaming: true }]);
-        const paso = Math.max(1, Math.floor(texto.length / 60));
-        const intv = setInterval(() => {
-          if (token !== tokenEjecucion.current) {
-            clearInterval(intv);
-            resolve();
-            return;
-          }
-          i += paso;
-          if (i >= texto.length) {
-            clearInterval(intv);
-            setMensajes((m) => {
-              const cp = [...m];
-              cp[cp.length - 1] = { role: "bot", text: texto, streaming: false };
-              return cp;
-            });
-            resolve();
-          } else {
-            const corte = i;
-            setMensajes((m) => {
-              const cp = [...m];
-              cp[cp.length - 1] = { role: "bot", text: texto.slice(0, corte), streaming: true };
-              return cp;
-            });
-          }
-        }, 22);
-      }),
-    [],
-  );
+  useEffect(() => {
+    reiniciarEstado();
+  }, [paciente.id, idioma, reiniciarEstado]);
 
-  const reproducirEscenario = useCallback(async () => {
-    if (ejecutando) return;
-    tokenEjecucion.current += 1;
-    const token = tokenEjecucion.current;
-    setEjecutando(true);
-    setMostrarCosto(false);
-    setMostrarUrgencia(false);
-    setAcciones(null);
-    setConfirmacion(null);
-    setEstados(ESTADOS_INICIALES);
+  // Tour interactivo de Driver.js — primera visita al chat
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (tourFueVisto()) return;
+    const id = setTimeout(() => lanzarTour(idioma), 700);
+    return () => clearTimeout(id);
+  }, [idioma]);
 
-    const flujo = ESCENARIOS[paciente.id as IdPaciente](paciente, idioma);
-    for (const ev of flujo) {
-      if (token !== tokenEjecucion.current) return;
+  const pedirUbicacion = () => {
+    if (!navigator.geolocation) {
+      setEstadoUbic("error");
+      return;
+    }
+    setEstadoUbic("pidiendo");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setUbicacion({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setEstadoUbic("ok");
+      },
+      () => setEstadoUbic("error"),
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 },
+    );
+  };
+
+  const probarVoz = useCallback(() => {
+    encolarTTS(
+      idioma === "es"
+        ? "Hola, soy Andrea, tu asistente de MedAdvisor."
+        : "Hello, I am Andrea, your MedAdvisor assistant.",
+    );
+  }, [encolarTTS, idioma]);
+
+  const aplicarEvento = useCallback(
+    (ev: EventoSSE) => {
       switch (ev.type) {
-        case "user":
-          setMensajes((m) => [...m, { role: "user", text: ev.text }]);
-          break;
-        case "wait":
-          await dormir(ev.ms);
-          break;
-        case "sidepanel":
-          setTabActiva(ev.tab);
-          if (ev.tab === "policy") setPolizaVisible(true);
-          break;
         case "agent_start":
           setEstados((s) => {
             const cp = [...s];
@@ -179,19 +336,62 @@ export function PantallaChat({ paciente }: Props) {
           });
           setAgentes((a) => {
             const cp = [...a];
-            cp[ev.idx] = { ...cp[ev.idx], ms: ev.ms, output: ev.output };
+            if (cp[ev.idx]) {
+              cp[ev.idx] = {
+                ...cp[ev.idx],
+                ms: ev.ms,
+                output: (ev.output ?? null) as AgenteEjecutado["output"],
+              };
+            }
             return cp;
           });
           break;
-        case "bot":
-          await transmitirBot(ev.text, token);
+        case "sidepanel":
+          setTabActiva(ev.tab);
+          if (ev.tab === "policy") setPolizaVisible(true);
           break;
-        case "card":
-          if (ev.kind === "cost") {
-            setRecomendaciones(ev.recs);
-            setEspecialidadVisible(ev.specialty);
-            setMostrarCosto(true);
+        case "bot_start":
+          ttsBufferRef.current = "";
+          setMensajes((m) => [...m, { role: "bot", text: "", streaming: true }]);
+          break;
+        case "bot_token":
+          setMensajes((m) => {
+            const cp = [...m];
+            const ult = cp[cp.length - 1];
+            if (ult && ult.role === "bot" && ult.streaming) {
+              cp[cp.length - 1] = { ...ult, text: ult.text + ev.text };
+            }
+            return cp;
+          });
+          if (voiceRef.current) {
+            ttsBufferRef.current += ev.text;
+            flushBufferTTS(false);
           }
+          break;
+        case "bot_end":
+          setMensajes((m) => {
+            const cp = [...m];
+            const ult = cp[cp.length - 1];
+            if (ult && ult.role === "bot" && ult.streaming) {
+              cp[cp.length - 1] = { ...ult, streaming: false };
+            }
+            return cp;
+          });
+          if (voiceRef.current) flushBufferTTS(true);
+          break;
+        case "card_cost":
+          setRecomendaciones(ev.recs);
+          setEspecialidadVisible(ev.specialty);
+          setMostrarCosto(true);
+          break;
+        case "recs_emergencia":
+          // Modo emergencia: actualizamos las recomendaciones en silencio
+          // (sin mostrar la tarjeta de costos para no distraer del red flag)
+          setRecomendaciones(ev.recs);
+          break;
+        case "clausula":
+          setClausulaCitada(ev.clausula);
+          setPolizaVisible(true);
           break;
         case "redflag":
           setMostrarUrgencia(true);
@@ -199,19 +399,385 @@ export function PantallaChat({ paciente }: Props) {
         case "actions":
           setAcciones(ev.actions);
           break;
+        case "error":
+          setMensajes((m) => [
+            ...m,
+            {
+              role: "bot",
+              text:
+                idioma === "es"
+                  ? `**Error del backend:** ${ev.message}`
+                  : `**Backend error:** ${ev.message}`,
+            },
+          ]);
+          break;
         case "done":
           setEjecutando(false);
           break;
       }
-    }
-    setEjecutando(false);
-  }, [ejecutando, paciente, idioma, transmitirBot]);
+    },
+    [idioma, flushBufferTTS],
+  );
+
+  const correrPipeline = useCallback(
+    async (sintoma: string) => {
+      cancelRef.current?.abort();
+      const ctl = new AbortController();
+      cancelRef.current = ctl;
+
+      detenerVoz();
+      setMostrarCosto(false);
+      setMostrarUrgencia(false);
+      setAcciones(null);
+      setConfirmacion(null);
+      setEstados(ESTADOS_INICIALES);
+      setAgentes(agentesIniciales);
+      setClausulaCitada(null);
+      setEjecutando(true);
+
+      try {
+        const resp = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: ctl.signal,
+          body: JSON.stringify({
+            pacienteId: paciente.id,
+            sintoma,
+            idioma,
+            ubicacion: ubicacion ?? undefined,
+          }),
+        });
+        if (!resp.ok || !resp.body) {
+          const err = await resp.text();
+          aplicarEvento({ type: "error", message: err || `HTTP ${resp.status}` });
+          setEjecutando(false);
+          return;
+        }
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const partes = buffer.split("\n\n");
+          buffer = partes.pop() ?? "";
+          for (const parte of partes) {
+            const linea = parte.split("\n").find((l) => l.startsWith("data: "));
+            if (!linea) continue;
+            try {
+              const ev = JSON.parse(linea.slice(6)) as EventoSSE;
+              aplicarEvento(ev);
+            } catch {
+              // ignorar
+            }
+          }
+        }
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        const msg = err instanceof Error ? err.message : String(err);
+        aplicarEvento({ type: "error", message: msg });
+      } finally {
+        setEjecutando(false);
+      }
+    },
+    [paciente.id, idioma, ubicacion, agentesIniciales, aplicarEvento, detenerVoz],
+  );
+
+  const enviarMensaje = useCallback(
+    async (texto: string) => {
+      if (ejecutando || !texto.trim()) return;
+      setMensajes((m) => [...m, { role: "user", text: texto }]);
+      await correrPipeline(texto);
+    },
+    [ejecutando, correrPipeline],
+  );
 
   const enviar = () => {
-    if (!composer.trim() || ejecutando) return;
+    const texto = composer.trim();
+    if (!texto) return;
     setComposer("");
-    reproducirEscenario();
+    enviarMensaje(texto);
   };
+
+  const alternarMicrofono = () => {
+    if (escuchando) {
+      recogRef.current?.stop();
+      return;
+    }
+    const w = window as unknown as VentanaConVoz;
+    const Cls = w.SpeechRecognition ?? w.webkitSpeechRecognition;
+    if (!Cls) {
+      alert(
+        idioma === "es"
+          ? "Tu navegador no soporta dictado por voz. Prueba Chrome o Edge."
+          : "Your browser doesn't support voice dictation. Try Chrome or Edge.",
+      );
+      return;
+    }
+    const recog = new Cls();
+    recog.lang = idioma === "es" ? "es-EC" : "en-US";
+    recog.interimResults = true;
+    recog.continuous = false;
+    recog.onresult = (e) => {
+      let texto = "";
+      for (let i = 0; i < e.results.length; i++) {
+        texto += e.results[i][0].transcript;
+      }
+      setComposer(texto);
+    };
+    recog.onerror = () => setEscuchando(false);
+    recog.onend = () => setEscuchando(false);
+    recogRef.current = recog;
+    setEscuchando(true);
+    recog.start();
+  };
+
+  const subirImagen = () => fileInputRef.current?.click();
+
+  const cancelarImagen = useCallback(() => {
+    if (imagenPendiente) URL.revokeObjectURL(imagenPendiente.url);
+    setImagenPendiente(null);
+    setCaptionImg("");
+  }, [imagenPendiente]);
+
+  const analizarImagenPendiente = useCallback(async () => {
+    if (!imagenPendiente || analizandoImg || ejecutando) return;
+    const { file, url } = imagenPendiente;
+    const caption = captionImg.trim();
+
+    // Mensaje del usuario con preview + caption
+    const mensajeUsuario = caption
+      ? `📷 ${caption}`
+      : idioma === "es"
+        ? `📷 Imagen del síntoma`
+        : `📷 Symptom photo`;
+    setMensajes((m) => [...m, { role: "user", text: mensajeUsuario }]);
+
+    setImagenPendiente(null);
+    setCaptionImg("");
+    setAnalizandoImg(true);
+
+    try {
+      const fd = new FormData();
+      fd.append("image", file);
+      fd.append("idioma", idioma);
+      if (caption) fd.append("caption", caption);
+      const resp = await fetch("/api/vision/analizar", { method: "POST", body: fd });
+
+      if (!resp.ok) {
+        const errData = (await resp.json().catch(() => null)) as
+          | { contentFiltered?: boolean; message?: string; error?: string; detail?: string }
+          | null;
+
+        if (errData?.contentFiltered) {
+          // Fallback: si hay caption, evaluamos sólo con texto
+          if (caption.length > 5) {
+            const aviso =
+              idioma === "es"
+                ? `📷 La imagen no pasó el filtro de seguridad de Azure, pero entendí lo que escribiste. Voy a evaluar tu caso con esa información.`
+                : `📷 The image was blocked by Azure safety filters, but I got your text. Evaluating with that info.`;
+            setMensajes((m) => [...m, { role: "bot", text: aviso }]);
+            if (voiceRef.current) {
+              ttsBufferRef.current = aviso;
+              flushBufferTTS(true);
+            }
+            setAnalizandoImg(false);
+            await correrPipeline(caption);
+            return;
+          }
+          // Sin caption: pedir descripción + foco al input
+          setMensajes((m) => [
+            ...m,
+            {
+              role: "bot",
+              text:
+                idioma === "es"
+                  ? `📷 La imagen no pasó el filtro de seguridad de Azure. **Escribe abajo qué pasó** ↓ — ya tienes el cursor listo, solo cuéntame y te evalúo.`
+                  : `📷 The image was blocked by Azure safety filter. **Type what happened below** ↓ — cursor is ready, just describe and I'll evaluate.`,
+            },
+          ]);
+          setTimeout(() => composerRef.current?.focus(), 100);
+          return;
+        }
+
+        // Otro error
+        setMensajes((m) => [
+          ...m,
+          {
+            role: "bot",
+            text: `**No pude analizar la imagen.** ${errData?.detail ?? errData?.error ?? "Error desconocido"}`,
+          },
+        ]);
+        return;
+      }
+
+      const data = (await resp.json()) as {
+        descripcion: string;
+        respuesta: string;
+        especialidadSugerida: string;
+        urgencia: string;
+      };
+
+      const breve =
+        idioma === "es"
+          ? `📷 **Veo en tu imagen:** ${data.descripcion}`
+          : `📷 **I see in your image:** ${data.descripcion}`;
+      setMensajes((m) => [...m, { role: "bot", text: breve }]);
+      if (voiceRef.current) {
+        ttsBufferRef.current = data.descripcion;
+        flushBufferTTS(true);
+      }
+      setAnalizandoImg(false);
+
+      const sintomaSintetico = caption
+        ? `${caption}. Imagen muestra: ${data.descripcion}`
+        : `Imagen muestra: ${data.descripcion}`;
+      await correrPipeline(sintomaSintetico);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setMensajes((m) => [...m, { role: "bot", text: `**Error de red:** ${msg}` }]);
+    } finally {
+      setAnalizandoImg(false);
+      URL.revokeObjectURL(url);
+    }
+  }, [imagenPendiente, captionImg, analizandoImg, ejecutando, idioma, correrPipeline, flushBufferTTS]);
+
+  const dispatcharAmbulancia = useCallback(() => {
+    if (ambulancia || conectando911) return;
+
+    const hospital = recomendaciones?.[0];
+    if (!hospital || !hospital.lat || !hospital.lng) {
+      alert(
+        idioma === "es"
+          ? "No tengo información de hospital. Inicia un caso de emergencia primero."
+          : "No hospital info available. Start an emergency case first.",
+      );
+      return;
+    }
+
+    const destino =
+      ubicacion ?? {
+        lat: hospital.lat + 0.012,
+        lng: hospital.lng + 0.012,
+      };
+
+    // Extraer triage del agente 0 para el contexto de los tips
+    const out0 = agentes[0]?.output;
+    const sintomasTriage = typeof out0?.sintomas === "string" ? out0.sintomas : "emergencia médica";
+    const especialidadTriage =
+      typeof out0?.especialidad === "string" ? out0.especialidad : "Emergencias";
+
+    setConectando911(true);
+    setTabActiva("map");
+
+    setTimeout(() => {
+      const coberturaEmerg =
+        paciente.coverages.find((c) => /emergencia/i.test(c.type.es))?.pct ?? 100;
+      const distKm = hospital.distKm > 0 ? hospital.distKm : 3;
+      // Simulación realista: 75-120s. Con tips espaciados, da tiempo para "vivir" la espera.
+      const duracionMs = Math.min(120000, Math.max(75000, distKm * 12000));
+      const minutosReales = Math.max(3, Math.round(distKm * 2.5));
+      const inicioTs = Date.now();
+
+      setAmbulancia({
+        hospitalNombre: hospital.name,
+        hospitalId: hospital.id,
+        hospitalLat: hospital.lat,
+        hospitalLng: hospital.lng,
+        destinoLat: destino.lat,
+        destinoLng: destino.lng,
+        inicioTs,
+        duracionMs,
+        cobertura: coberturaEmerg,
+        insurer: paciente.insurer,
+      });
+      setConectando911(false);
+
+      const anuncio =
+        idioma === "es"
+          ? `**🚑 Ambulancia despachada desde ${hospital.name}.** Llegada estimada en **${minutosReales} minutos**. Tu plan ${paciente.insurer} cubre el ${coberturaEmerg}% del traslado, copago $0. Mientras llega, te voy a guiar paso a paso.`
+          : `**🚑 Ambulance dispatched from ${hospital.name}.** ETA: **${minutosReales} minutes**. Your ${paciente.insurer} plan covers ${coberturaEmerg}% — $0 copay. I'll guide you step by step until they arrive.`;
+      setMensajes((m) => [...m, { role: "bot", text: anuncio }]);
+
+      if (voiceRef.current) {
+        ttsBufferRef.current = anuncio;
+        flushBufferTTS(true);
+      }
+
+      // Pedir consejos a GPT-4o y programarlos
+      (async () => {
+        try {
+          const resp = await fetch("/api/emergency/guidance", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              sintomas: sintomasTriage,
+              especialidad: especialidadTriage,
+              pacienteNombre: paciente.name.split(" ")[0],
+              preexisting: paciente.preexisting,
+              durationSeconds: Math.round(duracionMs / 1000),
+              idioma,
+            }),
+          });
+          if (!resp.ok) return;
+          const { tips } = (await resp.json()) as {
+            tips: { atMs: number; icon: string; text: string }[];
+          };
+
+          for (const t of tips) {
+            const elapsed = Date.now() - inicioTs;
+            const delay = Math.max(0, t.atMs - elapsed);
+            const timer = setTimeout(() => {
+              const iconEmoji =
+                t.icon === "calma"
+                  ? "🧘"
+                  : t.icon === "posicion"
+                    ? "🪑"
+                    : t.icon === "medicacion"
+                      ? "💊"
+                      : t.icon === "signos"
+                        ? "🩺"
+                        : t.icon === "llegada"
+                          ? "🚑"
+                          : "💡";
+              const texto = `${iconEmoji} ${t.text}`;
+              setMensajes((m) => [...m, { role: "bot", text: texto }]);
+              if (voiceRef.current) {
+                ttsBufferRef.current = t.text;
+                flushBufferTTS(true);
+              }
+            }, delay);
+            tipTimersRef.current.push(timer);
+          }
+        } catch {
+          // si falla, igual la simulación corre
+        }
+      })();
+
+      // Mensaje de llegada al final
+      llegadaTimerRef.current = setTimeout(() => {
+        const llegadaMsg =
+          idioma === "es"
+            ? `✓ **La ambulancia ha llegado.** Sigue las instrucciones del paramédico. Tu copago final es **$0** porque tu póliza ${paciente.insurer} cubre 100% emergencia. Te acompaño hasta el hospital.`
+            : `✓ **The ambulance has arrived.** Follow the paramedic's instructions. Your final copay is **$0** because your ${paciente.insurer} policy covers emergency 100%. I'll keep you company on the way.`;
+        setMensajes((m) => [...m, { role: "bot", text: llegadaMsg }]);
+        if (voiceRef.current) {
+          ttsBufferRef.current = llegadaMsg;
+          flushBufferTTS(true);
+        }
+      }, duracionMs + 500);
+    }, 1500);
+  }, [
+    ambulancia,
+    conectando911,
+    recomendaciones,
+    ubicacion,
+    paciente,
+    idioma,
+    agentes,
+    flushBufferTTS,
+  ]);
 
   const abrirReserva = (h: HospitalRecomendado) => setReservaPendiente(h);
   const confirmarReserva = (info: InfoReserva) => {
@@ -230,15 +796,21 @@ export function PantallaChat({ paciente }: Props) {
     { id: "policy", label: textos.panels.policy, icon: <Doc s={12} /> },
     { id: "map", label: textos.panels.map, icon: <Pin s={12} /> },
     { id: "costs", label: textos.panels.costs, icon: <Coin s={12} /> },
+    {
+      id: "historial",
+      label: textos.panels.historial,
+      icon: <Clock s={12} />,
+      badge: historial.length || undefined,
+    },
   ];
 
-  const etiquetaInicio = textos.caseLabelByType[paciente.case];
+  const tieneUbic = estadoUbic === "ok" && !!ubicacion;
 
   return (
     <>
       <div className="app">
         <div className="topbar">
-          <div className="brand">
+          <div className="brand" id="tour-brand">
             <BrandMark />
             <span>
               MedAdvisor<sup>AI</sup>
@@ -249,14 +821,52 @@ export function PantallaChat({ paciente }: Props) {
             <span>{textos.sessionPill}</span>
           </span>
           <div className="topbar-spacer" />
+          {voiceOn ? (
+            <button
+              className="voice-on-indicator"
+              style={{ cursor: "pointer" }}
+              onClick={probarVoz}
+              title="Probar voz"
+            >
+              ◆ {idioma === "es" ? "Voz Andrea activa · probar" : "Voice Andrea on · test"}
+            </button>
+          ) : null}
           <span className="topbar-pill" style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>
             <span className="dot violet" /> {textos.modelPill}
           </span>
           <ControlesPreferencias />
           <button
             className="icon-btn"
+            id="tour-help"
+            title={idioma === "es" ? "¿Cómo funciona?" : "How it works"}
+            onClick={() => {
+              setTutorialAbierto(true);
+            }}
+            style={{ fontFamily: "var(--font-serif)", fontWeight: 600, fontSize: 16 }}
+          >
+            ?
+          </button>
+          <button
+            className="icon-btn"
+            id="tour-tour"
+            title={idioma === "es" ? "Tour interactivo" : "Interactive tour"}
+            onClick={() => lanzarTour(idioma)}
+            style={{ fontSize: 14 }}
+          >
+            ✦
+          </button>
+          <button
+            className="icon-btn"
+            id="tour-voice"
+            title={voiceOn ? "Desactivar voz" : "Activar voz (Andrea)"}
+            onClick={() => setVoiceOn((v) => !v)}
+          >
+            {voiceOn ? <VolumeOn s={15} /> : <VolumeOff s={15} />}
+          </button>
+          <button
+            className="icon-btn"
             title={textos.resetDemo}
-            onClick={reproducirEscenario}
+            onClick={reiniciarEstado}
             disabled={ejecutando}
           >
             <Reset s={15} />
@@ -266,9 +876,25 @@ export function PantallaChat({ paciente }: Props) {
           </button>
         </div>
 
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) {
+              if (imagenPendiente) URL.revokeObjectURL(imagenPendiente.url);
+              setImagenPendiente({ file, url: URL.createObjectURL(file) });
+              setCaptionImg("");
+            }
+            e.target.value = "";
+          }}
+        />
+
         <div className="workspace">
           <div className="chat-col">
-            <div className="patient-strip">
+            <div className="patient-strip" id="tour-patient-strip">
               <div className={`avatar ${paciente.caseTone}`}>{paciente.initials}</div>
               <div className="patient-meta">
                 <span className="name">
@@ -290,7 +916,33 @@ export function PantallaChat({ paciente }: Props) {
               {mensajes.map((m, i) => (
                 <BurbujaMensaje key={i} mensaje={m} />
               ))}
-              {mostrarUrgencia ? <AlertaUrgencia textos={textos} /> : null}
+              {analizandoImg ? (
+                <div
+                  style={{
+                    margin: "8px 24px 8px 62px",
+                    padding: "10px 14px",
+                    background: "var(--accent-ai-soft)",
+                    border: "1px solid var(--accent-ai)",
+                    borderRadius: "var(--radius-sm)",
+                    fontSize: 12.5,
+                    color: "var(--accent-ai)",
+                    fontFamily: "var(--font-mono)",
+                  }}
+                >
+                  ◆ {idioma === "es"
+                    ? "GPT-4o Vision analizando la imagen…"
+                    : "GPT-4o Vision analyzing the image…"}
+                </div>
+              ) : null}
+              {mostrarUrgencia && !ambulancia ? (
+                <AlertaUrgencia
+                  textos={textos}
+                  onLlamar911={dispatcharAmbulancia}
+                  onVerMapa={() => setTabActiva("map")}
+                  conectando={conectando911}
+                />
+              ) : null}
+              {ambulancia ? <TarjetaAmbulancia ambulancia={ambulancia} idioma={idioma} /> : null}
               {mostrarCosto && recomendaciones && especialidadVisible ? (
                 <TarjetaCostos
                   recomendaciones={recomendaciones}
@@ -313,8 +965,19 @@ export function PantallaChat({ paciente }: Props) {
                     </button>
                   ) : null}
                   {acciones.includes("call911") ? (
-                    <button className="btn danger">
-                      <Phone s={14} /> {textos.call911}
+                    <button
+                      className="btn danger"
+                      onClick={dispatcharAmbulancia}
+                      disabled={conectando911 || ambulancia !== null}
+                    >
+                      <Phone s={14} />{" "}
+                      {conectando911
+                        ? "Conectando ECU 911…"
+                        : ambulancia
+                          ? idioma === "es"
+                            ? "Ambulancia en ruta"
+                            : "Ambulance en route"
+                          : textos.call911}
                     </button>
                   ) : null}
                   {acciones.includes("map") ? (
@@ -334,22 +997,146 @@ export function PantallaChat({ paciente }: Props) {
             </div>
 
             <div className="composer-wrap">
-              {mensajes.length <= 1 && !ejecutando ? (
-                <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
-                  <button className="chip" onClick={reproducirEscenario}>
-                    ▶ {textos.startCase} · {etiquetaInicio}
+              {!tieneUbic && estadoUbic !== "error" ? (
+                <div className="geo-banner" id="tour-geo">
+                  <div className="geo-emoji">📍</div>
+                  <div className="geo-text">
+                    <strong>
+                      {idioma === "es"
+                        ? "Activa tu ubicación para recomendaciones por distancia real"
+                        : "Share your location for distance-based recommendations"}
+                    </strong>
+                    <span>
+                      {idioma === "es"
+                        ? "Ordenamos los hospitales en red por proximidad real, no por simulación."
+                        : "We order in-network hospitals by real proximity, not simulation."}
+                    </span>
+                  </div>
+                  <button onClick={pedirUbicacion} disabled={estadoUbic === "pidiendo"}>
+                    {estadoUbic === "pidiendo"
+                      ? idioma === "es"
+                        ? "Pidiendo…"
+                        : "Asking…"
+                      : idioma === "es"
+                        ? "Activar ubicación"
+                        : "Enable location"}
                   </button>
-                  <button className="chip">📎 {textos.uploadPolicy}</button>
-                  <button className="chip">📷 {textos.uploadImage}</button>
-                  <button className="chip">🎤 {textos.voice}</button>
                 </div>
               ) : null}
-              <div className="composer">
-                <button className="tool-btn" aria-label="Adjuntar"><Paperclip /></button>
-                <button className="tool-btn" aria-label="Cámara"><Camera /></button>
-                <button className="tool-btn" aria-label="Voz"><Mic /></button>
+              {tieneUbic && ubicacion ? (
+                <div className="geo-active">
+                  📍 {idioma === "es" ? "Ubicación activa" : "Location active"} ·{" "}
+                  {ubicacion.lat.toFixed(3)}, {ubicacion.lng.toFixed(3)}
+                </div>
+              ) : null}
+              {estadoUbic === "error" ? (
+                <div
+                  className="geo-active"
+                  style={{ background: "var(--amber-soft)", color: "var(--amber)", borderColor: "var(--amber)" }}
+                >
+                  ⚠ {idioma === "es" ? "Permiso denegado o no disponible" : "Permission denied or unavailable"}
+                  <button
+                    onClick={pedirUbicacion}
+                    style={{ marginLeft: 6, color: "var(--amber)", textDecoration: "underline", fontSize: 11 }}
+                  >
+                    {idioma === "es" ? "reintentar" : "retry"}
+                  </button>
+                </div>
+              ) : null}
+              {imagenPendiente ? (
+                <div className="img-pendiente">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={imagenPendiente.url} alt="preview" className="img-thumb" />
+                  <input
+                    type="text"
+                    className="img-cap"
+                    placeholder={
+                      idioma === "es"
+                        ? "Cuenta qué pasó (opcional)…"
+                        : "Tell what happened (optional)…"
+                    }
+                    value={captionImg}
+                    onChange={(e) => setCaptionImg(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") analizarImagenPendiente();
+                      if (e.key === "Escape") cancelarImagen();
+                    }}
+                    autoFocus
+                  />
+                  <button className="img-btn cancelar" onClick={cancelarImagen}>
+                    {idioma === "es" ? "Cancelar" : "Cancel"}
+                  </button>
+                  <button
+                    className="img-btn analizar"
+                    onClick={analizarImagenPendiente}
+                    disabled={analizandoImg}
+                  >
+                    {analizandoImg
+                      ? idioma === "es"
+                        ? "Analizando…"
+                        : "Analyzing…"
+                      : idioma === "es"
+                        ? "Analizar"
+                        : "Analyze"}
+                  </button>
+                </div>
+              ) : null}
+              {mensajes.length <= 1 && !ejecutando && !imagenPendiente ? (
+                <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+                  <button
+                    className="chip"
+                    onClick={() => enviarMensaje(paciente.seedQuery[idioma])}
+                  >
+                    ▶ {textos.startCase}
+                  </button>
+                  <button className="chip" onClick={subirImagen}>
+                    📷 {idioma === "es" ? "Analizar foto del síntoma" : "Analyze symptom photo"}
+                  </button>
+                  <button className="chip" onClick={alternarMicrofono}>
+                    🎤 {idioma === "es" ? "Dictar por voz" : "Voice dictation"}
+                  </button>
+                </div>
+              ) : null}
+              <div className="composer" id="tour-composer">
+                <button
+                  className="tool-btn"
+                  id="tour-camera"
+                  aria-label="Subir imagen"
+                  title={
+                    idioma === "es"
+                      ? "Subir foto del síntoma (GPT-4o Vision)"
+                      : "Upload symptom photo (GPT-4o Vision)"
+                  }
+                  onClick={subirImagen}
+                >
+                  <Camera />
+                </button>
+                <button
+                  id="tour-mic"
+                  className={`tool-btn${escuchando ? " escuchando" : ""}`}
+                  aria-label={escuchando ? "Detener dictado" : "Dictar por voz"}
+                  title={
+                    escuchando
+                      ? idioma === "es"
+                        ? "Detener (escuchando…)"
+                        : "Stop (listening…)"
+                      : idioma === "es"
+                        ? "Dictar por voz"
+                        : "Voice dictation"
+                  }
+                  onClick={alternarMicrofono}
+                >
+                  <Mic />
+                </button>
                 <input
-                  placeholder={textos.composerPlaceholder}
+                  ref={composerRef}
+                  placeholder={
+                    escuchando
+                      ? idioma === "es"
+                        ? "Escuchando…"
+                        : "Listening…"
+                      : textos.composerPlaceholder
+                  }
                   value={composer}
                   onChange={(e) => setComposer(e.target.value)}
                   onKeyDown={(e) => {
@@ -374,7 +1161,7 @@ export function PantallaChat({ paciente }: Props) {
           </div>
 
           <div className="side-panel">
-            <div className="side-tabs">
+            <div className="side-tabs" id="tour-tabs">
               {tabs.map((t) => (
                 <button
                   key={t.id}
@@ -395,7 +1182,12 @@ export function PantallaChat({ paciente }: Props) {
                 <PanelRazonamiento agentes={agentes} estados={estados} textos={textos} />
               ) : tabActiva === "policy" ? (
                 polizaVisible ? (
-                  <PanelPoliza paciente={paciente} idioma={idioma} textos={textos} />
+                  <PanelPoliza
+                    paciente={paciente}
+                    idioma={idioma}
+                    textos={textos}
+                    clausulaCitada={clausulaCitada}
+                  />
                 ) : (
                   <div className="panel-empty">
                     <div className="ico"><Doc s={22} /></div>
@@ -405,7 +1197,13 @@ export function PantallaChat({ paciente }: Props) {
                 )
               ) : tabActiva === "map" ? (
                 recomendaciones ? (
-                  <PanelMapa recomendaciones={recomendaciones} textos={textos} idioma={idioma} />
+                  <PanelMapa
+                    recomendaciones={recomendaciones}
+                    textos={textos}
+                    idioma={idioma}
+                    ubicacion={ubicacion}
+                    ambulancia={ambulancia}
+                  />
                 ) : (
                   <div className="panel-empty">
                     <div className="ico"><MapIcon s={22} /></div>
@@ -428,6 +1226,8 @@ export function PantallaChat({ paciente }: Props) {
                     <div className="empty-sub">{textos.costsEmptySub}</div>
                   </div>
                 )
+              ) : tabActiva === "historial" ? (
+                <PanelHistorial paciente={paciente} historial={historial} idioma={idioma} />
               ) : null}
             </div>
           </div>
@@ -441,6 +1241,11 @@ export function PantallaChat({ paciente }: Props) {
         textos={textos}
         onCerrar={() => setReservaPendiente(null)}
         onConfirmar={confirmarReserva}
+      />
+      <Tutorial
+        abierto={tutorialAbierto}
+        onCerrar={() => setTutorialAbierto(false)}
+        idioma={idioma}
       />
     </>
   );

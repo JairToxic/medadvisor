@@ -1,13 +1,14 @@
-import type { Idioma, Paciente } from "@/lib/tipos";
+import type { ClausulaCitada, Idioma, Paciente } from "@/lib/tipos";
 import type { Textos } from "@/lib/i18n";
 
 interface Props {
   paciente: Paciente;
   idioma: Idioma;
   textos: Textos;
+  clausulaCitada?: ClausulaCitada | null;
 }
 
-export function PanelPoliza({ paciente, idioma, textos }: Props) {
+export function PanelPoliza({ paciente, idioma, textos, clausulaCitada }: Props) {
   const dedPct = Math.round((paciente.deductible.used / paciente.deductible.annual) * 100);
   const validacion = textos.policyValidations
     .replace("{n}", String(paciente.coverages.length))
@@ -70,9 +71,51 @@ export function PanelPoliza({ paciente, idioma, textos }: Props) {
           ))}
         </div>
       </div>
-      <div style={{ fontSize: 11.5, color: "var(--ink-3)", fontFamily: "var(--font-mono)", padding: "0 4px" }}>
+      <div style={{ fontSize: 11.5, color: "var(--ink-3)", fontFamily: "var(--font-mono)", padding: "0 4px 12px" }}>
         ✓ {validacion}
       </div>
+
+      {clausulaCitada ? (
+        <div
+          style={{
+            marginTop: 6,
+            border: "1px solid var(--accent-ai)",
+            background: "var(--accent-ai-soft)",
+            borderRadius: "var(--radius)",
+            padding: 14,
+          }}
+        >
+          <div
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: 10.5,
+              color: "var(--accent-ai)",
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              marginBottom: 6,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            ◆ Cláusula citada · RAG vectorial
+          </div>
+          <div style={{ fontSize: 11.5, color: "var(--ink-3)", fontFamily: "var(--font-mono)", marginBottom: 6 }}>
+            Sección: <strong style={{ color: "var(--ink)" }}>{clausulaCitada.seccion}</strong>
+          </div>
+          <div
+            style={{
+              fontFamily: "var(--font-serif)",
+              fontSize: 13.5,
+              lineHeight: 1.5,
+              color: "var(--ink)",
+              fontStyle: "italic",
+            }}
+          >
+            "{clausulaCitada.texto}"
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

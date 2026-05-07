@@ -37,7 +37,20 @@ export function TarjetaCostos({ recomendaciones, especialidad, idioma, textos, o
                 <div className="hosp-meta">
                   ${r.fee} · {idioma === "es" ? "cubre" : "covers"} {r.coveredPct}% ·{" "}
                   {r.inNet ? textos.inNet : textos.outOfNet}
+                  {r.distKm > 0 ? ` · ${r.distKm} km` : ""}
                 </div>
+                {r.doctorSugerido ? (
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: "var(--accent-ai)",
+                      fontFamily: "var(--font-mono)",
+                      marginTop: 3,
+                    }}
+                  >
+                    ◆ {r.doctorSugerido.name} · {r.doctorSugerido.schedule}
+                  </div>
+                ) : null}
               </div>
               <div className="copago">
                 <span className="currency">$</span>

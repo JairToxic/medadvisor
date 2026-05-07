@@ -155,6 +155,28 @@ export const Moon = ({ s = 14 }: PropsIcono) => (
   </svg>
 );
 
+export const VolumeOn = ({ s = 16 }: PropsIcono) => (
+  <svg width={s} height={s} viewBox="0 0 24 24" {...base} strokeWidth="1.7">
+    <path d="M11 5 6 9H2v6h4l5 4z" />
+    <path d="M16 9a4 4 0 0 1 0 6" />
+    <path d="M19 6a8 8 0 0 1 0 12" />
+  </svg>
+);
+
+export const VolumeOff = ({ s = 16 }: PropsIcono) => (
+  <svg width={s} height={s} viewBox="0 0 24 24" {...base} strokeWidth="1.7">
+    <path d="M11 5 6 9H2v6h4l5 4z" />
+    <path d="m16 9 6 6M22 9l-6 6" />
+  </svg>
+);
+
+export const Clock = ({ s = 12 }: PropsIcono) => (
+  <svg width={s} height={s} viewBox="0 0 24 24" {...base} strokeWidth="1.7">
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7v5l3 2" />
+  </svg>
+);
+
 export const BrandMark = ({ s = 26 }: PropsIcono) => (
   <div className="brand-mark" style={{ width: s, height: s, borderRadius: s * 0.27 }} />
 );

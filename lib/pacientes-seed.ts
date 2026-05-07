@@ -1,9 +1,17 @@
-import type { IdPaciente, Paciente } from "@/lib/tipos";
+import type { Paciente } from "@/lib/tipos";
 
-export const PACIENTES: Record<IdPaciente, Paciente> = {
-  juan: {
+/**
+ * Datos sintéticos de pacientes — la única fuente en código.
+ * Esta semilla se sube a Azure Blob (`pacientes/{id}.json`) la primera vez
+ * que se llama a /api/admin/seed. A partir de ahí el runtime lee los
+ * pacientes de Blob, no de este archivo.
+ *
+ * Aseguradoras y nombres son ficticios (HackIAthon Viamatica 2026).
+ */
+export const SEED_PACIENTES: Paciente[] = [
+  {
     id: "juan",
-    name: "Juan Pérez",
+    name: "Juan Pérez Bermúdez",
     initials: "JP",
     age: 54,
     case: "routine",
@@ -15,7 +23,7 @@ export const PACIENTES: Record<IdPaciente, Paciente> = {
     insurerTone: "green",
     plan: "Essential 50",
     policyNo: "AS-2024-0187432",
-    validity: "15 mar 2024 → 15 mar 2027",
+    validity: "15 mar 2024 a 15 mar 2027",
     deductible: { annual: 1000, used: 850 },
     coverages: [
       { type: { es: "Emergencia", en: "Emergency" }, pct: 100 },
@@ -31,9 +39,9 @@ export const PACIENTES: Record<IdPaciente, Paciente> = {
     },
     specialty: { es: "Neurología", en: "Neurology" },
   },
-  maria: {
+  {
     id: "maria",
-    name: "María López",
+    name: "María Fernanda López Vera",
     initials: "ML",
     age: 42,
     case: "preexisting",
@@ -45,7 +53,7 @@ export const PACIENTES: Record<IdPaciente, Paciente> = {
     insurerTone: "amber",
     plan: "World Access",
     policyNo: "VP-2023-9981102",
-    validity: "01 jul 2023 → 01 jul 2026",
+    validity: "01 jul 2023 a 01 jul 2026",
     deductible: { annual: 800, used: 320 },
     coverages: [
       { type: { es: "Emergencia", en: "Emergency" }, pct: 100 },
@@ -61,9 +69,9 @@ export const PACIENTES: Record<IdPaciente, Paciente> = {
     },
     specialty: { es: "Neurología", en: "Neurology" },
   },
-  pedro: {
+  {
     id: "pedro",
-    name: "Pedro Morales",
+    name: "Pedro Antonio Morales Cedeño",
     initials: "PM",
     age: 60,
     case: "redflag",
@@ -75,7 +83,7 @@ export const PACIENTES: Record<IdPaciente, Paciente> = {
     insurerTone: "red",
     plan: "Enfermedades Graves",
     policyNo: "SM-2022-4480091",
-    validity: "10 ene 2022 → 10 ene 2027",
+    validity: "10 ene 2022 a 10 ene 2027",
     deductible: { annual: 1500, used: 0 },
     coverages: [
       { type: { es: "Emergencia", en: "Emergency" }, pct: 100 },
@@ -91,10 +99,64 @@ export const PACIENTES: Record<IdPaciente, Paciente> = {
     },
     specialty: { es: "Cardiología / Emergencias", en: "Cardiology / Emergency" },
   },
-};
-
-export const ID_PACIENTES: IdPaciente[] = ["juan", "maria", "pedro"];
-
-export function esPacienteValido(id: string | undefined): id is IdPaciente {
-  return id === "juan" || id === "maria" || id === "pedro";
-}
+  {
+    id: "lucia",
+    name: "Lucía Estefanía Cárdenas Riofrío",
+    initials: "LC",
+    age: 28,
+    case: "deductible",
+    caseTone: "amber",
+    caseLabel: { es: "Deducible nuevo", en: "Fresh deductible" },
+    city: "Cuenca",
+    insurer: "Aegis Salud",
+    insurerMark: "A",
+    insurerTone: "green",
+    plan: "Joven Plus",
+    policyNo: "AS-2025-3344210",
+    validity: "01 ene 2025 a 01 ene 2027",
+    deductible: { annual: 500, used: 0 },
+    coverages: [
+      { type: { es: "Emergencia", en: "Emergency" }, pct: 100 },
+      { type: { es: "Hospitalización", en: "Hospitalization" }, pct: 80 },
+      { type: { es: "Consulta externa", en: "Outpatient" }, pct: 75 },
+      { type: { es: "Traumatología", en: "Trauma" }, pct: 80 },
+    ],
+    network: ["metropolitano", "axxis", "alcivar"],
+    preexisting: [],
+    seedQuery: {
+      es: "Me torcí el tobillo bajando las gradas y se está hinchando rápido.",
+      en: "I twisted my ankle on the stairs and it is swelling fast.",
+    },
+    specialty: { es: "Traumatología", en: "Trauma" },
+  },
+  {
+    id: "roberto",
+    name: "Roberto Andrés Salas Mora",
+    initials: "RS",
+    age: 67,
+    case: "preexisting",
+    caseTone: "amber",
+    caseLabel: { es: "Adulto mayor", en: "Senior" },
+    city: "Manta",
+    insurer: "Vital+",
+    insurerMark: "V",
+    insurerTone: "amber",
+    plan: "Senior Care 65+",
+    policyNo: "VP-2021-7720418",
+    validity: "10 abr 2021 a 10 abr 2026",
+    deductible: { annual: 1200, used: 1100 },
+    coverages: [
+      { type: { es: "Emergencia", en: "Emergency" }, pct: 100 },
+      { type: { es: "Hospitalización", en: "Hospitalization" }, pct: 90 },
+      { type: { es: "Consulta externa", en: "Outpatient" }, pct: 80 },
+      { type: { es: "Reumatología", en: "Rheumatology" }, pct: 85 },
+    ],
+    network: ["axxis", "omni", "kennedy"],
+    preexisting: ["Artritis reumatoide", "Hipertensión arterial"],
+    seedQuery: {
+      es: "Me duelen mucho las rodillas y las manos, sobre todo en las mañanas.",
+      en: "My knees and hands hurt a lot, especially in the morning.",
+    },
+    specialty: { es: "Reumatología", en: "Rheumatology" },
+  },
+];

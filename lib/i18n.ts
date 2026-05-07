@@ -11,7 +11,7 @@ export interface Textos {
   composerPlaceholder: string;
   sendShortcut: string;
   suggestQuick: string[];
-  panels: { reasoning: string; policy: string; map: string; costs: string };
+  panels: { reasoning: string; policy: string; map: string; costs: string; historial: string };
   reasoningTitle: string;
   reasoningSub: string;
   agents: { name: string; task: string }[];
@@ -105,7 +105,7 @@ export const TEXTOS: Record<Idioma, Textos> = {
     composerPlaceholder: "Cuéntale a MedAdvisor qué sientes…",
     sendShortcut: "Enter para enviar",
     suggestQuick: ["Dolor de cabeza", "Subir póliza", "Buscar especialidad"],
-    panels: { reasoning: "Razonamiento", policy: "Póliza", map: "Hospitales", costs: "Costos" },
+    panels: { reasoning: "Razonamiento", policy: "Póliza", map: "Hospitales", costs: "Costos", historial: "Historial" },
     reasoningTitle: "Cadena de agentes",
     reasoningSub: "Semantic Kernel · 4 agentes",
     agents: [
@@ -213,7 +213,7 @@ export const TEXTOS: Record<Idioma, Textos> = {
     composerPlaceholder: "Tell MedAdvisor what you're feeling…",
     sendShortcut: "Enter to send",
     suggestQuick: ["Headache", "Upload policy", "Find specialty"],
-    panels: { reasoning: "Reasoning", policy: "Policy", map: "Hospitals", costs: "Costs" },
+    panels: { reasoning: "Reasoning", policy: "Policy", map: "Hospitals", costs: "Costs", historial: "History" },
     reasoningTitle: "Agent chain",
     reasoningSub: "Semantic Kernel · 4 agents",
     agents: [

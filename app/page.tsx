@@ -1,5 +1,9 @@
 import { PantallaLogin } from "@/componentes/PantallaLogin";
+import { listarPacientes } from "@/lib/pacientes-azure";
 
-export default function Pagina() {
-  return <PantallaLogin />;
+export const dynamic = "force-dynamic";
+
+export default async function Pagina() {
+  const pacientes = await listarPacientes();
+  return <PantallaLogin pacientes={pacientes} />;
 }

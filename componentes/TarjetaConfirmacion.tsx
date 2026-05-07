@@ -28,7 +28,7 @@ export function TarjetaConfirmacion({ reserva, textos }: Props) {
           </div>
           <div>
             <div className="key">{textos.doctor}</div>
-            <div className="val">Dra. M. González</div>
+            <div className="val">{reserva.doctor ?? "Por asignar"}</div>
           </div>
           <div>
             <div className="key">{textos.emailSent}</div>
