@@ -1,6 +1,11 @@
 # MedAdvisor AI
 
 > **Reto #3 · HackIAthon Viamatica 2026**
+> Descripción: Un agente conversacional que ayude al paciente a entender su beneficio antes
+de atenderse. El paciente ingresa su síntoma, el agente sugiere la especialidad en el hospital y,
+cruzando datos con su plan de seguro, le indica exactamente cuánto será su copago y qué
+hospital de la red le conviene más económicamente
+
 > Estimador agéntico de copago y cobertura para el paciente.
 
 Asistente conversacional que ayuda al paciente a entender su beneficio **antes** de atenderse. El paciente describe su síntoma (texto, voz o foto), una cadena de cuatro agentes razona sobre el caso, cruza los datos con su póliza de seguro extraída por OCR, busca el hospital más conveniente de su red preferente y le indica **exactamente cuánto pagará** y **a qué hospital le conviene ir**.
@@ -39,7 +44,7 @@ Asistente conversacional que ayuda al paciente a entender su beneficio **antes**
 - **Cálculo determinístico del copago**: `copago = fee × (1 - cobertura%)`, con deducible pendiente.
 - **Hospital más económico de la red**, ordenado: en-red primero → menor copago → menor distancia.
 
-### Funcionalidades ampliadas (efecto WOW)
+### Funcionalidades ampliadas 
 
 - **Multi-modal**: entrada por **texto**, **voz** (Web Speech API en el navegador) o **foto del síntoma** (GPT-4o Vision con caption opcional). Si Azure Content Safety bloquea la imagen, el flujo continúa con el texto.
 - **Voz Andrea Neural** ecuatoriana (`es-EC-AndreaNeural` de Azure Speech). El TTS se ejecuta **por chunks de oración** mientras el bot escribe, no al final, para que la voz arranque casi al instante.
