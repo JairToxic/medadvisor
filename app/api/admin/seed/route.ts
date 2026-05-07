@@ -1,5 +1,6 @@
 import "server-only";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { tieneAdminToken } from "@/lib/rate-limit";
 import {
   type SearchField,
   type SearchIndex,
@@ -221,7 +222,20 @@ interface DocDirectorio {
 // ============================================================
 // POST /api/admin/seed
 // ============================================================
-export async function POST() {
+export async function POST(req: NextRequest) {
+  // El seed re-genera índices, OCR-ea PDFs y sube blobs — operación cara.
+  // Sólo accesible con el token administrativo.
+  if (!tieneAdminToken(req)) {
+    return NextResponse.json(
+      {
+        error: "unauthorized",
+        message:
+          "Este endpoint requiere el header `Authorization: Bearer <ADMIN_TOKEN>`. Configura ADMIN_TOKEN en el servidor.",
+      },
+      { status: 401 },
+    );
+  }
+
   const reporte: Record<string, unknown> = {};
 
   try {

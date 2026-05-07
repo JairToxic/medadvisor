@@ -147,7 +147,7 @@ export interface InfoReserva {
   code: string;
 }
 
-export type AccionRapida = "book" | "call911" | "map";
+export type AccionRapida = "book" | "call911" | "map" | "reschedule" | "cancel";
 
 export interface ClausulaCitada {
   seccion: string;

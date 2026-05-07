@@ -10,6 +10,7 @@ import {
   streamCoordinator,
 } from "@/lib/agentes";
 import { sseEncoder, type EventoSSE } from "@/lib/sse";
+import { checkRateLimit, respuesta429 } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,9 +25,25 @@ const Body = z.object({
       lng: z.number(),
     })
     .optional(),
+  citaActiva: z
+    .object({
+      day: z.string(),
+      time: z.string(),
+      hospital: z.string(),
+      doctor: z.string().optional(),
+      specialty: z.string(),
+      copago: z.number(),
+      code: z.string(),
+    })
+    .nullable()
+    .optional(),
 });
 
 export async function POST(req: NextRequest) {
+  // 60 chats / hora / IP. Suficiente para la demo, blinda contra spammeo trivial.
+  const lim = checkRateLimit(req, "chat", 60, 60 * 60 * 1000);
+  if (!lim.ok) return respuesta429(lim.retryAfterSeconds!);
+
   const json = await req.json().catch(() => null);
   const parsed = Body.safeParse(json);
   if (!parsed.success) {
@@ -35,7 +52,7 @@ export async function POST(req: NextRequest) {
       headers: { "Content-Type": "application/json" },
     });
   }
-  const { pacienteId, sintoma, idioma, ubicacion } = parsed.data;
+  const { pacienteId, sintoma, idioma, ubicacion, citaActiva } = parsed.data;
   const paciente = await obtenerPaciente(pacienteId);
   if (!paciente) {
     return new Response(JSON.stringify({ error: "paciente no encontrado en Blob Storage" }), {
@@ -53,12 +70,19 @@ export async function POST(req: NextRequest) {
         const t0 = Date.now();
         send({ type: "agent_start", idx: 0 });
         const triage = await ejecutarTriage(sintoma, paciente, idioma, historial);
+        send({ type: "intent", intencion: triage.intencion });
         send({
           type: "agent_done",
           idx: 0,
           ms: Date.now() - t0,
           output: {
-            sintomas: triage.sintomas,
+            intencion:
+              triage.intencion === "sintoma"
+                ? "consulta clínica"
+                : triage.intencion === "gestion_cita"
+                  ? { text: "GESTIÓN DE CITA", tone: "v-good" }
+                  : { text: "GENERAL", tone: "v-good" },
+            sintomas: triage.sintomas || "—",
             especialidad: triage.especialidad,
             urgencia: triage.urgencia,
             tipo_consulta:
@@ -73,6 +97,57 @@ export async function POST(req: NextRequest) {
                 : { text: triage.redFlags.join(" · "), tone: "v-bad" },
           },
         });
+
+        // Caso "gestión de cita" o "general": no corremos cobertura ni recomendador.
+        // Respondemos conversacionalmente, conociendo si hay una cita activa.
+        if (triage.intencion === "gestion_cita" || triage.intencion === "general") {
+          const nombre = paciente.name.split(" ")[0];
+          let respuesta: string;
+          let acciones: ("reschedule" | "cancel")[] = [];
+
+          if (triage.intencion === "gestion_cita") {
+            if (citaActiva) {
+              const docTxt = citaActiva.doctor ? ` con ${citaActiva.doctor}` : "";
+              respuesta =
+                idioma === "es"
+                  ? `Hola ${nombre}. Tu cita actual es el **${citaActiva.day} a las ${citaActiva.time}** en **${citaActiva.hospital}**${docTxt} para ${citaActiva.specialty}. ¿Quieres reagendarla o cancelarla?`
+                  : `Hi ${nombre}. Your current appointment is **${citaActiva.day} at ${citaActiva.time}** at **${citaActiva.hospital}**${docTxt} for ${citaActiva.specialty}. Want to reschedule or cancel it?`;
+              acciones = ["reschedule", "cancel"];
+            } else {
+              respuesta =
+                idioma === "es"
+                  ? `Hola ${nombre}, ahora mismo no tienes una cita activa. Si quieres agendar una, descríbeme qué síntoma tienes y te ayudo a encontrar el hospital con menor copago.`
+                  : `Hi ${nombre}, you don't have any active appointment right now. If you want to book one, tell me your symptom and I'll find the lowest-copay hospital for you.`;
+            }
+          } else {
+            // general
+            if (citaActiva) {
+              respuesta =
+                idioma === "es"
+                  ? `Hola ${nombre}, ¿en qué te ayudo? Recuerda que tienes una cita el ${citaActiva.day} a las ${citaActiva.time} en ${citaActiva.hospital}.`
+                  : `Hi ${nombre}, how can I help? Remember you have an appointment ${citaActiva.day} at ${citaActiva.time} at ${citaActiva.hospital}.`;
+            } else {
+              respuesta =
+                idioma === "es"
+                  ? `Hola ${nombre}, soy MedAdvisor. Cuéntame qué sientes y te ayudo a entender tu cobertura, encontrar el hospital más conveniente y agendar.`
+                  : `Hi ${nombre}, I'm MedAdvisor. Tell me what you feel and I'll help with coverage, hospital choice and booking.`;
+            }
+          }
+
+          send({ type: "bot_start" });
+          for (const ch of respuesta) {
+            send({ type: "bot_token", text: ch });
+            await sleep(8);
+          }
+          send({ type: "bot_end" });
+
+          if (acciones.length > 0) {
+            send({ type: "actions", actions: acciones });
+          }
+          send({ type: "done" });
+          controller.close();
+          return;
+        }
 
         // Caso "tercera persona": no aplica cobertura del usuario para tratamiento,
         // pero SÍ necesitamos el hospital de emergencia más cercano para poder
@@ -257,25 +332,28 @@ export async function POST(req: NextRequest) {
         send({ type: "sidepanel", tab: "map" });
         await sleep(250);
         send({ type: "sidepanel", tab: "costs" });
-        send({
-          type: "card_cost",
-          recs: recs.map((r) => ({
-            id: r.id,
-            name: r.name,
-            fee: r.fee,
-            rating: r.rating,
-            wait: r.wait,
-            inNet: r.inNet,
-            coveredPct: r.coveredPct,
-            copago: r.copago,
-            distKm: r.distKm,
-            city: r.city,
-            lat: r.lat,
-            lng: r.lng,
-            doctorSugerido: r.doctorSugerido,
-          })),
-          specialty: triage.especialidad,
-        });
+        // Sólo emitimos la tarjeta de costos si hay al menos un hospital recomendado
+        if (recs.length > 0) {
+          send({
+            type: "card_cost",
+            recs: recs.map((r) => ({
+              id: r.id,
+              name: r.name,
+              fee: r.fee,
+              rating: r.rating,
+              wait: r.wait,
+              inNet: r.inNet,
+              coveredPct: r.coveredPct,
+              copago: r.copago,
+              distKm: r.distKm,
+              city: r.city,
+              lat: r.lat,
+              lng: r.lng,
+              doctorSugerido: r.doctorSugerido,
+            })),
+            specialty: triage.especialidad,
+          });
+        }
 
         const t3 = Date.now();
         send({ type: "agent_start", idx: 3 });

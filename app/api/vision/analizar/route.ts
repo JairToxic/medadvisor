@@ -1,6 +1,7 @@
 import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 import { DEPLOYMENTS, getOpenAI } from "@/lib/azure/openai";
+import { checkRateLimit, respuesta429 } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,6 +29,10 @@ ESQUEMA DE RESPUESTA:
 Devuelve SOLO el JSON, sin texto adicional.`;
 
 export async function POST(req: NextRequest) {
+  // 20 análisis de imagen / hora / IP — Vision es más caro
+  const lim = checkRateLimit(req, "vision", 20, 60 * 60 * 1000);
+  if (!lim.ok) return respuesta429(lim.retryAfterSeconds!);
+
   const formData = await req.formData().catch(() => null);
   const archivo = formData?.get("image");
   const idioma = (formData?.get("idioma") as string) ?? "es";

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Newsreader, JetBrains_Mono } from "next/font/google";
 import { ProveedorPreferencias } from "@/componentes/ProveedorPreferencias";
 import "./globals.css";
@@ -26,6 +26,11 @@ export const metadata: Metadata = {
   title: "MedAdvisor AI · Asistente médico-financiero",
   description:
     "En 30 segundos sabes qué te pasa, a dónde ir y cuánto pagas. HackIAthon Viamatica 2026.",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
 };
 
 const scriptTemaInicial = `

@@ -4,30 +4,31 @@ import dynamic from "next/dynamic";
 import { useState } from "react";
 import type { HospitalRecomendado, Idioma } from "@/lib/tipos";
 import type { Textos } from "@/lib/i18n";
+import type { AmbulanciaInfo } from "@/componentes/TarjetaAmbulancia";
 
-// Leaflet usa window al cargar — solo cliente
 const MapaHospitales = dynamic(
   () => import("@/componentes/MapaHospitales").then((m) => m.MapaHospitales),
-  { ssr: false, loading: () => (
-    <div
-      style={{
-        height: 280,
-        background: "var(--bg-elev)",
-        border: "1px solid var(--line)",
-        borderRadius: "var(--radius)",
-        display: "grid",
-        placeItems: "center",
-        color: "var(--ink-3)",
-        fontFamily: "var(--font-mono)",
-        fontSize: 12,
-      }}
-    >
-      Cargando mapa…
-    </div>
-  )},
+  {
+    ssr: false,
+    loading: () => (
+      <div
+        style={{
+          height: 280,
+          background: "var(--bg-elev)",
+          border: "1px solid var(--line)",
+          borderRadius: "var(--radius)",
+          display: "grid",
+          placeItems: "center",
+          color: "var(--ink-3)",
+          fontFamily: "var(--font-mono)",
+          fontSize: 12,
+        }}
+      >
+        Cargando mapa…
+      </div>
+    ),
+  },
 );
-
-import type { AmbulanciaInfo } from "@/componentes/TarjetaAmbulancia";
 
 interface Props {
   recomendaciones: HospitalRecomendado[];
@@ -35,9 +36,10 @@ interface Props {
   idioma: Idioma;
   ubicacion?: { lat: number; lng: number } | null;
   ambulancia?: AmbulanciaInfo | null;
+  onAgendar?: (h: HospitalRecomendado) => void;
 }
 
-export function PanelMapa({ recomendaciones, textos, idioma, ubicacion, ambulancia }: Props) {
+export function PanelMapa({ recomendaciones, textos, idioma, ubicacion, ambulancia, onAgendar }: Props) {
   const [seleccionado, setSeleccionado] = useState(0);
   if (recomendaciones.length === 0) return null;
 
@@ -94,9 +96,28 @@ export function PanelMapa({ recomendaciones, textos, idioma, ubicacion, ambulanc
                   {r.doctorSugerido ? ` · ${r.doctorSugerido.name.replace(/^Dra?\.\s*/, "")}` : ""}
                 </div>
               </div>
-              <div>
+              <div style={{ textAlign: "right" }}>
                 <div className="m-cost">${r.copago}</div>
                 <div className="m-meta" style={{ textAlign: "right" }}>{textos.copay}</div>
+                {onAgendar ? (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onAgendar(r);
+                    }}
+                    style={{
+                      marginTop: 4,
+                      fontSize: 10.5,
+                      fontFamily: "var(--font-mono)",
+                      color: "var(--primary)",
+                      letterSpacing: "0.04em",
+                      cursor: "pointer",
+                      padding: 0,
+                    }}
+                  >
+                    {idioma === "es" ? "Agendar →" : "Book →"}
+                  </button>
+                ) : null}
               </div>
             </div>
           ))}

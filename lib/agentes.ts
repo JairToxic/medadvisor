@@ -14,6 +14,7 @@ import type {
 } from "@/lib/tipos";
 
 export interface ResultadoTriage {
+  intencion: "sintoma" | "gestion_cita" | "general";
   sintomas: string;
   especialidad: string;
   urgencia: "normal" | "urgente" | "emergencia";
@@ -60,9 +61,14 @@ export async function ejecutarTriage(
   });
 
   const txt = respuesta.choices[0]?.message?.content ?? "{}";
-  const parsed = JSON.parse(txt) as ResultadoTriage;
+  const parsed = JSON.parse(txt) as Partial<ResultadoTriage>;
+  const intencion: ResultadoTriage["intencion"] =
+    parsed.intencion === "gestion_cita" || parsed.intencion === "general"
+      ? parsed.intencion
+      : "sintoma";
   return {
-    sintomas: parsed.sintomas ?? "síntoma sin clasificar",
+    intencion,
+    sintomas: parsed.sintomas ?? "",
     especialidad: parsed.especialidad ?? "Medicina General",
     urgencia: (parsed.urgencia ?? "normal") as ResultadoTriage["urgencia"],
     redFlags: Array.isArray(parsed.redFlags) ? parsed.redFlags : [],
@@ -273,7 +279,7 @@ export async function recomendarConSearch(
     if (doc.tipo === "hospital") hospitales.push(doc);
   }
 
-  // Si no hay matches con todos los filtros, relajar (sin acepta_insurer)
+  // Fallback 1 — si no hay matches con todos los filtros, relajar el aseguradora
   if (hospitales.length === 0) {
     const respLax = await cliDir.search("*", {
       filter: `tipo eq 'hospital' and specialties/any(s: s eq '${especialidadEsc}')`,
@@ -281,6 +287,34 @@ export async function recomendarConSearch(
       top: 8,
     });
     for await (const r of respLax.results) {
+      const doc = r.document as DocHospital;
+      if (doc.tipo === "hospital") hospitales.push(doc);
+    }
+  }
+
+  // Fallback 2 — la especialidad no existe en ningún hospital indexado.
+  // Devolvemos los hospitales de la red que aceptan la aseguradora (mismo orden geo/fee).
+  // Esto evita que el coordinator alucine hospitales y siempre haya tarjeta de costos.
+  if (hospitales.length === 0) {
+    const respCity = await cliDir.search("*", {
+      filter: `tipo eq 'hospital' and acceptsInsurers/any(i: i eq '${insurerEsc}')`,
+      orderBy,
+      top: 8,
+    });
+    for await (const r of respCity.results) {
+      const doc = r.document as DocHospital;
+      if (doc.tipo === "hospital") hospitales.push(doc);
+    }
+  }
+
+  // Fallback 3 — último recurso: cualquier hospital indexado.
+  if (hospitales.length === 0) {
+    const respAny = await cliDir.search("*", {
+      filter: "tipo eq 'hospital'",
+      orderBy,
+      top: 8,
+    });
+    for await (const r of respAny.results) {
       const doc = r.document as DocHospital;
       if (doc.tipo === "hospital") hospitales.push(doc);
     }

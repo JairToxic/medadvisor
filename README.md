@@ -293,6 +293,48 @@ Aseguradoras y datos clínicos son ficticios. Hospitales reales del Ecuador, usa
 
 ---
 
+## Seguridad y costos en producción
+
+El demo está pensado para correr unos días en abierto. Para evitar abuso de cuotas y facturación inesperada, la app aplica:
+
+- **Token administrativo** en `/api/admin/seed`. El endpoint sólo responde si el header `Authorization: Bearer $ADMIN_TOKEN` coincide con la variable `ADMIN_TOKEN` configurada en el servidor.
+- **Rate limiting por IP** en memoria (ventana deslizante de 1 hora):
+
+| Endpoint | Límite por IP |
+|---|---|
+| `/api/chat` | 60 / hora |
+| `/api/voice/tts` | 300 / hora |
+| `/api/vision/analizar` | 20 / hora |
+| `/api/emergency/guidance` | 30 / hora |
+| `/api/policy/upload` | 5 / hora |
+
+Más allá de los límites se devuelve `429 Too Many Requests` con `Retry-After`.
+
+### Lo que tú debes configurar en Azure
+
+1. **Alerta de presupuesto**: en el portal Azure, `rg-medadvisor` → Cost Management → Budgets → crea un budget mensual con alerta al 50% / 80% / 100%.
+2. **Cuotas de Document Intelligence F0**: 500 páginas/mes. El seed consume 5 (una por póliza), así que tienes margen para 100 ejecuciones del seed.
+3. **Cuotas de Speech F0**: 5h de TTS/mes. Cada chat genera ~1-2 min. Suficiente para ~100 sesiones.
+4. **GPT-4o**: pay-per-token. Una sesión completa cuesta ~$0.05–0.15 USD. El rate limit a 60/hora por IP cubre el riesgo de spam.
+
+### Buenas prácticas que ya están aplicadas
+
+- `.env.local` está en `.gitignore` (claves nunca van al repo).
+- Storage Account creado con `--allow-blob-public-access false` (los blobs requieren key/SAS).
+- Esquemas de input validados con `zod` (chat, voice, guidance) para evitar payloads malformados.
+- Tamaño máximo de imagen: 8 MB.
+- Modal de subida de PDF rate-limitado a 5/h para no agotar Doc Intelligence.
+
+### Lo que NO está incluido (queda para producción real)
+
+- Autenticación de usuarios (cualquiera puede usar la app pública).
+- Persistencia de citas (el booking vive en memoria del navegador).
+- WAF / DDoS protection (Azure Front Door lo añadiría).
+- Logging y métricas de uso.
+- Rotación automática de keys.
+
+---
+
 ## Aviso legal
 
 La aplicación es **referencial** y no reemplaza la consulta médica ni la lectura de la póliza original. Los pacientes, las aseguradoras (Aegis Salud, Vital+, Solaris Med) y los datos clínicos son **sintéticos**. Las decisiones de cobertura reales se rigen siempre por el contrato vigente con la aseguradora.

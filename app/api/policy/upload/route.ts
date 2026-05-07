@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { getDocIntel } from "@/lib/azure/docintel";
 import { getContenedorPolizas } from "@/lib/azure/blob";
 import { config as azureConfig } from "@/lib/azure/config";
+import { checkRateLimit, respuesta429 } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,6 +17,10 @@ interface AnalyzeStatus {
 }
 
 export async function POST(req: NextRequest) {
+  // 5 uploads de PDF / hora / IP — Doc Intelligence F0 = 500 páginas/mes
+  const lim = checkRateLimit(req, "policy", 5, 60 * 60 * 1000);
+  if (!lim.ok) return respuesta429(lim.retryAfterSeconds!);
+
   const formData = await req.formData().catch(() => null);
   const archivo = formData?.get("file");
   if (!(archivo instanceof File)) {

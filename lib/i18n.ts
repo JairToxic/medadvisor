@@ -69,6 +69,10 @@ export interface Textos {
   emailSent: string;
   preValidationCode: string;
   downloadPdf: string;
+  reschedule: string;
+  cancelAppt: string;
+  cancelConfirm: string;
+  rescheduled: string;
   bookingTitle: string;
   bookingSub: string;
   dayLabel: string;
@@ -176,6 +180,10 @@ export const TEXTOS: Record<Idioma, Textos> = {
     emailSent: "Email enviado",
     preValidationCode: "Código de pre-validación",
     downloadPdf: "Descargar PDF",
+    reschedule: "Reagendar",
+    cancelAppt: "Cancelar cita",
+    cancelConfirm: "¿Seguro que deseas cancelar esta cita?",
+    rescheduled: "Reagendada",
     bookingTitle: "Agendar en",
     bookingSub: "Copago estimado",
     dayLabel: "Día",
@@ -284,6 +292,10 @@ export const TEXTOS: Record<Idioma, Textos> = {
     emailSent: "Email sent",
     preValidationCode: "Pre-validation code",
     downloadPdf: "Download PDF",
+    reschedule: "Reschedule",
+    cancelAppt: "Cancel appointment",
+    cancelConfirm: "Cancel this appointment?",
+    rescheduled: "Rescheduled",
     bookingTitle: "Book at",
     bookingSub: "Estimated copay",
     dayLabel: "Day",

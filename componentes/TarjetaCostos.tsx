@@ -12,6 +12,7 @@ interface Props {
 }
 
 export function TarjetaCostos({ recomendaciones, especialidad, idioma, textos, onAgendar, onVerMapa }: Props) {
+  if (!recomendaciones || recomendaciones.length === 0) return null;
   const mejor = recomendaciones[0];
   const peor = recomendaciones[recomendaciones.length - 1];
   const ahorro = peor.copago - mejor.copago;
@@ -29,7 +30,13 @@ export function TarjetaCostos({ recomendaciones, especialidad, idioma, textos, o
           {recomendaciones.map((r, i) => (
             <div
               key={r.id}
-              className={`cost-row ${i === 0 ? "best" : i === recomendaciones.length - 1 ? "bad" : "warn"}`}
+              className={`cost-row clickable ${i === 0 ? "best" : i === recomendaciones.length - 1 ? "bad" : "warn"}`}
+              onClick={() => onAgendar(r)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") onAgendar(r);
+              }}
             >
               <span className="pill-mark" />
               <div>
@@ -52,16 +59,24 @@ export function TarjetaCostos({ recomendaciones, especialidad, idioma, textos, o
                   </div>
                 ) : null}
               </div>
-              <div className="copago">
-                <span className="currency">$</span>
-                {r.copago}
+              <div style={{ textAlign: "right" }}>
+                <div className="copago">
+                  <span className="currency">$</span>
+                  {r.copago}
+                </div>
+                <div className="row-cta">
+                  {idioma === "es" ? "Agendar →" : "Book →"}
+                </div>
               </div>
             </div>
           ))}
         </div>
         <div className="savings-line">
           <Sparkle s={12} /> {textos.bestSavings} <strong>${ahorro}</strong>{" "}
-          {idioma === "es" ? "eligiendo" : "choosing"} {mejor.name}.
+          {idioma === "es" ? "eligiendo" : "choosing"} {mejor.name}.{" "}
+          {idioma === "es"
+            ? "Click en cualquier hospital para agendar ahí."
+            : "Click any hospital to book there."}
         </div>
         <div className="cta-row">
           <button className="btn primary" onClick={() => onAgendar(mejor)}>

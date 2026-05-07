@@ -1,17 +1,21 @@
-import { Check, Doc } from "@/componentes/Iconos";
+import { Cal, Check } from "@/componentes/Iconos";
 import type { InfoReserva } from "@/lib/tipos";
 import type { Textos } from "@/lib/i18n";
 
 interface Props {
   reserva: InfoReserva;
   textos: Textos;
+  reagendada?: boolean;
+  onReagendar?: () => void;
+  onCancelar?: () => void;
 }
 
-export function TarjetaConfirmacion({ reserva, textos }: Props) {
+export function TarjetaConfirmacion({ reserva, textos, reagendada, onReagendar, onCancelar }: Props) {
   return (
     <div className="confirm-card">
       <div className="conf-head">
-        <Check s={13} /> {textos.appointmentConfirmed}
+        <Check s={13} />{" "}
+        {reagendada ? textos.rescheduled.toUpperCase() : textos.appointmentConfirmed}
       </div>
       <div className="conf-body">
         <h4>
@@ -43,9 +47,22 @@ export function TarjetaConfirmacion({ reserva, textos }: Props) {
           <br />
           <strong>MA-{reserva.code}</strong>
         </div>
-        <button className="btn ghost" style={{ marginLeft: "auto" }}>
-          <Doc s={14} /> {textos.downloadPdf}
-        </button>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {onReagendar ? (
+            <button className="btn ghost" onClick={onReagendar} style={{ fontSize: 12 }}>
+              <Cal s={13} /> {textos.reschedule}
+            </button>
+          ) : null}
+          {onCancelar ? (
+            <button
+              className="btn ghost"
+              onClick={onCancelar}
+              style={{ fontSize: 12, color: "var(--red)", borderColor: "var(--red-soft)" }}
+            >
+              {textos.cancelAppt}
+            </button>
+          ) : null}
+        </div>
       </div>
     </div>
   );

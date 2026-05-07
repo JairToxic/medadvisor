@@ -35,6 +35,7 @@ import { ControlesPreferencias } from "@/componentes/ControlesPreferencias";
 import { Tutorial } from "@/componentes/Tutorial";
 import { lanzarTour, tourFueVisto } from "@/lib/tour";
 import { usePreferencias } from "@/componentes/ProveedorPreferencias";
+import { avisar, confirmar } from "@/lib/swal";
 import type {
   AccionRapida,
   AgenteEjecutado,
@@ -71,7 +72,8 @@ type EventoSSE =
   | { type: "recs_emergencia"; recs: HospitalRecomendado[] }
   | { type: "clausula"; clausula: ClausulaCitada }
   | { type: "redflag" }
-  | { type: "actions"; actions: AccionRapida[] }
+  | { type: "actions"; actions: ("book" | "call911" | "map" | "reschedule" | "cancel")[] }
+  | { type: "intent"; intencion: "sintoma" | "gestion_cita" | "general" }
   | { type: "error"; message: string }
   | { type: "done" };
 
@@ -114,6 +116,7 @@ export function PantallaChat({ paciente, historial }: Props) {
   const [acciones, setAcciones] = useState<AccionRapida[] | null>(null);
   const [reservaPendiente, setReservaPendiente] = useState<HospitalRecomendado | null>(null);
   const [confirmacion, setConfirmacion] = useState<InfoReserva | null>(null);
+  const [reagendada, setReagendada] = useState(false);
   const [composer, setComposer] = useState("");
   const [ejecutando, setEjecutando] = useState(false);
   const [polizaVisible, setPolizaVisible] = useState(false);
@@ -279,6 +282,7 @@ export function PantallaChat({ paciente, historial }: Props) {
     setClausulaCitada(null);
     setAmbulancia(null);
     setConectando911(false);
+    setReagendada(false);
     setEjecutando(false);
   }, [idioma, paciente.name, agentesIniciales, detenerVoz, limpiarTimersEmergencia]);
 
@@ -429,7 +433,9 @@ export function PantallaChat({ paciente, historial }: Props) {
       setMostrarCosto(false);
       setMostrarUrgencia(false);
       setAcciones(null);
-      setConfirmacion(null);
+      // NOTA: NO limpiamos `confirmacion` — la cita persiste entre mensajes,
+      // así el bot puede saber si tiene cita activa al responder gestion_cita.
+      // La cita sólo se borra al pulsar "Cancelar cita" o reiniciar el caso.
       setEstados(ESTADOS_INICIALES);
       setAgentes(agentesIniciales);
       setClausulaCitada(null);
@@ -445,6 +451,7 @@ export function PantallaChat({ paciente, historial }: Props) {
             sintoma,
             idioma,
             ubicacion: ubicacion ?? undefined,
+            citaActiva: confirmacion ?? null,
           }),
         });
         if (!resp.ok || !resp.body) {
@@ -508,10 +515,12 @@ export function PantallaChat({ paciente, historial }: Props) {
     const w = window as unknown as VentanaConVoz;
     const Cls = w.SpeechRecognition ?? w.webkitSpeechRecognition;
     if (!Cls) {
-      alert(
+      avisar(
         idioma === "es"
           ? "Tu navegador no soporta dictado por voz. Prueba Chrome o Edge."
           : "Your browser doesn't support voice dictation. Try Chrome or Edge.",
+        "info",
+        idioma === "es" ? "Dictado no disponible" : "Dictation unavailable",
       );
       return;
     }
@@ -648,10 +657,12 @@ export function PantallaChat({ paciente, historial }: Props) {
 
     const hospital = recomendaciones?.[0];
     if (!hospital || !hospital.lat || !hospital.lng) {
-      alert(
+      avisar(
         idioma === "es"
           ? "No tengo información de hospital. Inicia un caso de emergencia primero."
           : "No hospital info available. Start an emergency case first.",
+        "warning",
+        idioma === "es" ? "Sin hospital activo" : "No active hospital",
       );
       return;
     }
@@ -780,11 +791,35 @@ export function PantallaChat({ paciente, historial }: Props) {
   ]);
 
   const abrirReserva = (h: HospitalRecomendado) => setReservaPendiente(h);
+
   const confirmarReserva = (info: InfoReserva) => {
+    const eraReagenda = confirmacion !== null;
     setConfirmacion(info);
     setReservaPendiente(null);
     setAcciones(null);
+    setReagendada(eraReagenda);
   };
+
+  const reagendarCita = useCallback(() => {
+    if (!confirmacion || !recomendaciones) return;
+    // Buscar el hospital de la reserva original por nombre
+    const hospital = recomendaciones.find((h) => h.name === confirmacion.hospital);
+    if (hospital) setReservaPendiente(hospital);
+  }, [confirmacion, recomendaciones]);
+
+  const cancelarCita = useCallback(async () => {
+    const ok = await confirmar({
+      title: idioma === "es" ? "¿Cancelar la cita?" : "Cancel appointment?",
+      text: textos.cancelConfirm,
+      confirmText: idioma === "es" ? "Sí, cancelar" : "Yes, cancel",
+      cancelText: idioma === "es" ? "Volver" : "Back",
+      icon: "warning",
+      danger: true,
+    });
+    if (!ok) return;
+    setConfirmacion(null);
+    setReagendada(false);
+  }, [textos.cancelConfirm, idioma]);
 
   const tabs: { id: IdPanel; label: string; icon: React.ReactNode; badge?: number }[] = [
     {
@@ -905,7 +940,7 @@ export function PantallaChat({ paciente, historial }: Props) {
                 </span>
               </div>
               <span className={`case-tag ${paciente.caseTone}`}>{paciente.caseLabel[idioma]}</span>
-              <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center" }}>
+              <div className="ps-caso-id" style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center" }}>
                 <span className="kicker">
                   {textos.caseHash} #{paciente.id.toUpperCase().padEnd(5, "0")}
                 </span>
@@ -943,7 +978,7 @@ export function PantallaChat({ paciente, historial }: Props) {
                 />
               ) : null}
               {ambulancia ? <TarjetaAmbulancia ambulancia={ambulancia} idioma={idioma} /> : null}
-              {mostrarCosto && recomendaciones && especialidadVisible ? (
+              {mostrarCosto && recomendaciones && recomendaciones.length > 0 && especialidadVisible ? (
                 <TarjetaCostos
                   recomendaciones={recomendaciones}
                   especialidad={especialidadVisible}
@@ -953,10 +988,18 @@ export function PantallaChat({ paciente, historial }: Props) {
                   onVerMapa={() => setTabActiva("map")}
                 />
               ) : null}
-              {confirmacion ? <TarjetaConfirmacion reserva={confirmacion} textos={textos} /> : null}
-              {acciones && !confirmacion ? (
-                <div style={{ margin: "8px 24px 8px 62px", display: "flex", gap: 8 }}>
-                  {acciones.includes("book") ? (
+              {confirmacion ? (
+                <TarjetaConfirmacion
+                  reserva={confirmacion}
+                  textos={textos}
+                  reagendada={reagendada}
+                  onReagendar={reagendarCita}
+                  onCancelar={cancelarCita}
+                />
+              ) : null}
+              {acciones ? (
+                <div style={{ margin: "8px 24px 8px 62px", display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {acciones.includes("book") && !confirmacion ? (
                     <button
                       className="btn primary"
                       onClick={() => recomendaciones && abrirReserva(recomendaciones[0])}
@@ -983,6 +1026,25 @@ export function PantallaChat({ paciente, historial }: Props) {
                   {acciones.includes("map") ? (
                     <button className="btn ghost" onClick={() => setTabActiva("map")}>
                       <MapIcon s={14} /> {textos.seeMap}
+                    </button>
+                  ) : null}
+                  {acciones.includes("reschedule") ? (
+                    <button
+                      className="btn primary"
+                      onClick={reagendarCita}
+                      disabled={!confirmacion}
+                    >
+                      <Cal s={14} /> {textos.reschedule}
+                    </button>
+                  ) : null}
+                  {acciones.includes("cancel") ? (
+                    <button
+                      className="btn ghost"
+                      onClick={cancelarCita}
+                      disabled={!confirmacion}
+                      style={{ color: "var(--red)", borderColor: "var(--red-soft)" }}
+                    >
+                      {textos.cancelAppt}
                     </button>
                   ) : null}
                   <button
@@ -1203,6 +1265,7 @@ export function PantallaChat({ paciente, historial }: Props) {
                     idioma={idioma}
                     ubicacion={ubicacion}
                     ambulancia={ambulancia}
+                    onAgendar={abrirReserva}
                   />
                 ) : (
                   <div className="panel-empty">
@@ -1218,6 +1281,7 @@ export function PantallaChat({ paciente, historial }: Props) {
                     paciente={paciente}
                     idioma={idioma}
                     textos={textos}
+                    onAgendar={abrirReserva}
                   />
                 ) : (
                   <div className="panel-empty">

@@ -2,6 +2,7 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { config } from "@/lib/azure/config";
+import { checkRateLimit, respuesta429 } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,6 +22,10 @@ function escaparXml(s: string): string {
 }
 
 export async function POST(req: NextRequest) {
+  // 300 TTS / hora / IP — el chat hace TTS por cada oración, así que es generoso
+  const lim = checkRateLimit(req, "tts", 300, 60 * 60 * 1000);
+  if (!lim.ok) return respuesta429(lim.retryAfterSeconds!);
+
   const body = await req.json().catch(() => null);
   const parsed = Body.safeParse(body);
   if (!parsed.success) {

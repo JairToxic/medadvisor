@@ -2,6 +2,7 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { DEPLOYMENTS, getOpenAI } from "@/lib/azure/openai";
+import { checkRateLimit, respuesta429 } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,6 +41,9 @@ Iconos sugeridos: calma · posicion · medicacion · signos · llegada
 Idioma: el indicado por el usuario.`;
 
 export async function POST(req: NextRequest) {
+  const lim = checkRateLimit(req, "guidance", 30, 60 * 60 * 1000);
+  if (!lim.ok) return respuesta429(lim.retryAfterSeconds!);
+
   const body = await req.json().catch(() => null);
   const parsed = Body.safeParse(body);
   if (!parsed.success) {
