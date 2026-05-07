@@ -78,6 +78,7 @@ API Routes (mismo proceso)
     ├─→ Blob Storage (pacientes/ · polizas/ · historial/)
     └─→ Azure Speech (TTS es-EC-AndreaNeural)
 ```
+<img width="1672" height="941" alt="image" src="https://github.com/user-attachments/assets/14cca096-5f16-4297-b70f-43455010f88f" />
 
 ---
 
